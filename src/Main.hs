@@ -4,6 +4,7 @@ import Graphics.Vty
 import Data.Default (def)
 import Control.Monad.RWS
 import Control.Monad
+import Data.List (intercalate)
 
 data FMState = FMState FilePath [FilePath]
 
@@ -38,10 +39,11 @@ processEvent = do
     k <- ask >>= liftIO . nextEvent
     if k == EvKey KEsc []
         then return True
-        else do
-            case k of
-                -- Add keys here.
-                _ -> return False
+        else
+            return False
+            -- case k of
+            --     -- Add keys here.
+            --     _ -> return False
 
 updateDisplay :: FileManagerAction ()
 updateDisplay = do
@@ -49,8 +51,10 @@ updateDisplay = do
     (w,h) <- asks outputIface >>= liftIO . displayBounds
     path <- gets getPath
 
+    dir <- liftIO ls
     let pathPic = translate 0 1 (string defAttr path)
-    let pic = picForLayers $ [info , pathPic]
+        dirPic = translate 1 2 (string defAttr (intercalate " " dir))
+    let pic = picForLayers  [info , pathPic, dirPic]
     vty <- ask
     liftIO $ update vty pic
 
