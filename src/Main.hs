@@ -5,21 +5,26 @@ import Data.Default (def)
 import Control.Monad.RWS
 import Control.Monad
 import Data.List (intercalate)
+import Data.List.PointedList hiding (length)
 
-data FMState = FMState FilePath [FilePath]
+-- FileManagerState CurrentDirectory (Contents with cursor)
+data FMState = FMState FilePath (PointedList FilePath)
 
-getPath :: FMState -> FilePath
-getPath (FMState path _) = path
+pwd :: FMState -> FilePath
+pwd (FMState path _) = path
+
+ls :: FMState -> PointedList FilePath
+ls (FMState _ content) = content
 
 type FileManagerAction = RWST Vty () FMState IO
-
-ls :: IO [FilePath]
-ls = getCurrentDirectory >>= getDirectoryContents
 
 getDefState :: IO FMState
 getDefState = do
     path <- getCurrentDirectory
-    return $ FMState path []
+    content <- getCurrentDirectory >>= getDirectoryContents
+    case fromList content of
+        Nothing -> return $ FMState path (PointedList [] "." [".."])
+        Just p  -> return $ FMState path p
 
 main :: IO ()
 main = do
@@ -34,28 +39,51 @@ update' = do
     done <- processEvent
     unless done update'
 
+moveCursor
+  :: (PointedList FilePath -> Maybe (PointedList FilePath))
+     -> FMState -> FMState
+moveCursor moveFn (FMState path dir) = case moveFn dir of
+    Nothing -> FMState path dir
+    Just dir' -> FMState path dir'
+
+goDown :: FMState -> FMState
+goDown = moveCursor next
+
+goUp :: FMState -> FMState
+goUp = moveCursor previous
+
 processEvent :: FileManagerAction Bool
 processEvent = do
     k <- ask >>= liftIO . nextEvent
     if k == EvKey KEsc []
         then return True
-        else
+        else do
+            case k of
+                -- Add keys here.
+                EvKey KDown [] -> modify goDown
+                EvKey KUp   [] -> modify goUp
+                _ -> return ()
             return False
-            -- case k of
-            --     -- Add keys here.
-            --     _ -> return False
+
+
+drawDir :: PointedList FilePath -> [Image]
+drawDir (PointedList l p r) = left ++ [drawCursor] ++ right
+    where drawCursor = translate 1 (length l) $ string (defAttr `withBackColor` blue) p
+          left = map (\(y, fpath) -> translate 1 y (string defAttr fpath)) (zip [0..] (reverse l))
+          right = map (\(y, fpath) -> translate 1 (y + length l + 1) (string defAttr fpath)) (zip [0..] r)
+
+drawFMState :: FMState -> Picture
+drawFMState (FMState path dir) = picForLayers $ (translate 0 0 (string defAttr path)) : (map (translate 0 1) (drawDir dir))
 
 updateDisplay :: FileManagerAction ()
 updateDisplay = do
-    let info = string defAttr "Use ESC to exit"
-    (w,h) <- asks outputIface >>= liftIO . displayBounds
-    path <- gets getPath
+    -- (w,h) <- asks outputIface >>= liftIO . displayBounds
 
-    dir <- liftIO ls
-    let pathPic = translate 0 1 (string defAttr path)
-        dirPic = translate 1 2 (string defAttr (intercalate " " dir))
-    let pic = picForLayers  [info , pathPic, dirPic]
+    fmstate <- get
     vty <- ask
+
+    let pic = drawFMState fmstate
+
     liftIO $ update vty pic
 
 
