@@ -1,11 +1,12 @@
+{-# LANGUAGE OverloadedStrings #-}
 
 import System.Directory
 import Graphics.Vty
 import Data.Default (def)
 import Control.Monad.RWS
-import Control.Monad
-import Data.List (intercalate)
 import Data.List.PointedList hiding (length)
+import Data.List (sort)
+import Debug.Trace
 
 -- FileManagerState CurrentDirectory (Contents with cursor)
 data FMState = FMState FilePath (PointedList FilePath)
@@ -18,18 +19,19 @@ ls (FMState _ content) = content
 
 type FileManagerAction = RWST Vty () FMState IO
 
-getDefState :: IO FMState
-getDefState = do
+updateState :: IO FMState
+updateState = do
     path <- getCurrentDirectory
     content <- getCurrentDirectory >>= getDirectoryContents
-    case fromList content of
+    let sortedContent = sort content
+    case fromList sortedContent of
         Nothing -> return $ FMState path (PointedList [] "." [".."])
         Just p  -> return $ FMState path p
 
 main :: IO ()
 main = do
     vty <- mkVty def
-    state <- getDefState
+    state <- updateState
     (_finalState, ()) <- execRWST update' vty state
     shutdown vty
 
@@ -52,6 +54,17 @@ goDown = moveCursor next
 goUp :: FMState -> FMState
 goUp = moveCursor previous
 
+moveToDir :: FileManagerAction ()
+moveToDir  = do
+    (FMState path (PointedList _ dir _)) <- get
+    let newPath = path ++ "/" ++ dir
+    isDir <- liftIO $ doesDirectoryExist newPath
+    when isDir $ do
+        liftIO $ setCurrentDirectory newPath
+        liftIO updateState >>= put
+
+
+
 processEvent :: FileManagerAction Bool
 processEvent = do
     k <- ask >>= liftIO . nextEvent
@@ -62,13 +75,14 @@ processEvent = do
                 -- Add keys here.
                 EvKey KDown [] -> modify goDown
                 EvKey KUp   [] -> modify goUp
+                EvKey KEnter [] -> moveToDir
                 _ -> return ()
             return False
 
 
 drawDir :: PointedList FilePath -> [Image]
 drawDir (PointedList l p r) = left ++ [drawCursor] ++ right
-    where drawCursor = translate 1 (length l) $ string (defAttr `withBackColor` blue) p
+    where drawCursor = translate 1 (length l) $ string (defAttr `withBackColor` green) p
           left = map (\(y, fpath) -> translate 1 y (string defAttr fpath)) (zip [0..] (reverse l))
           right = map (\(y, fpath) -> translate 1 (y + length l + 1) (string defAttr fpath)) (zip [0..] r)
 
