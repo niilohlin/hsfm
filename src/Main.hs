@@ -6,8 +6,9 @@ import Data.Default (def)
 import Control.Monad.RWS
 import Data.List.PointedList hiding (length)
 import Data.List (sort)
-import Debug.Trace
+import qualified Data.Map as M
 
+type KeyMap = M.Map Event (FileManagerAction ())
 -- FileManagerState CurrentDirectory (Contents with cursor)
 data FMState = FMState FilePath (PointedList FilePath)
 
@@ -31,8 +32,8 @@ updateState = do
 main :: IO ()
 main = do
     vty <- mkVty def
-    state <- updateState
-    (_finalState, ()) <- execRWST update' vty state
+    state' <- updateState
+    (_finalState, ()) <- execRWST update' vty state'
     shutdown vty
 
 update' :: FileManagerAction ()
@@ -63,7 +64,25 @@ moveToDir  = do
         liftIO $ setCurrentDirectory newPath
         liftIO updateState >>= put
 
+movePrevious :: FileManagerAction ()
+movePrevious = do
+    (FMState path _) <- get
+    liftIO $ setCurrentDirectory $ path ++ "/.."
+    liftIO updateState >>= put
 
+
+
+
+defKeyMap :: KeyMap
+defKeyMap = M.fromList [
+      (EvKey KDown [], modify goDown)
+    , (EvKey KUp   [], modify goUp)
+    , (EvKey (KChar 'j') [],  modify goDown)
+    , (EvKey (KChar 'k') [],  modify goUp)
+    , (EvKey KEnter [], moveToDir)
+    , (EvKey KRight [], moveToDir)
+    , (EvKey KLeft  [], movePrevious)
+    ]
 
 processEvent :: FileManagerAction Bool
 processEvent = do
@@ -71,18 +90,15 @@ processEvent = do
     if k == EvKey KEsc []
         then return True
         else do
-            case k of
-                -- Add keys here.
-                EvKey KDown [] -> modify goDown
-                EvKey KUp   [] -> modify goUp
-                EvKey KEnter [] -> moveToDir
-                _ -> return ()
+            case M.lookup k defKeyMap of
+                Nothing -> return ()
+                Just action -> action
             return False
 
 
 drawDir :: PointedList FilePath -> [Image]
 drawDir (PointedList l p r) = left ++ [drawCursor] ++ right
-    where drawCursor = translate 1 (length l) $ string (defAttr `withBackColor` green) p
+    where drawCursor = translate 1 (length l) $ string (defAttr `withForeColor` blue) p
           left = map (\(y, fpath) -> translate 1 y (string defAttr fpath)) (zip [0..] (reverse l))
           right = map (\(y, fpath) -> translate 1 (y + length l + 1) (string defAttr fpath)) (zip [0..] r)
 
